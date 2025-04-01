@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>PULSIFY - Health Monitoring</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.4.1/dist/css/bootstrap.min.css" integrity="sha384-Vkoo8x4CGsO3+Hhxv8T/Q5PaXtkKtu6ug5TOeNV6gBiFeWPGFN9MuhOf23Q9Ifjh" crossorigin="anonymous">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <style>
+        body {
+            background-image: url('https://t4.ftcdn.net/jpg/10/01/48/49/360_F_1001484929_QvZsAGhuLqHoz7fFBgIKWX3qasTDXLOf.jpg');
+            background-size: cover;
+            height: 100vh;
+        }
+        .navbar {
+            background-color: rgba(50, 251, 227, 0.688);
+        }
+        .navbar-brand {
+            font-size: 40px;
+            font-family: 'Times New Roman', Times, serif;
+            color: black;
+        }
+        .card {
+            background-color: rgba(50, 251, 227, 0.688);
+            padding: 30px;
+            width: 18rem;
+            margin-top: 20px;
+        }
+        .nav-link {
+            font-size: 25px;
+            color: black;
+        }
+        .container-flex {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 20px; /* Spacing between card and graph */
+            padding-top: 20px;
+        }
+        .chart-container {
+            width: 500px; /* Increased width for the graph */
+            background-color: white;
+            padding: 10px;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-expand-lg">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="http://127.0.0.1:8000/pulse/logged">PULSIFY</a>
+            <div class="collapse navbar-collapse" id="navbarSupportedContent">
+                <ul class="navbar-nav ml-auto align-items-center">
+                    <li class="nav-item mr-3"> <!-- Add margin-right -->
+                        <h4 style="color:rgb(49, 8, 51)">Welcome, {{ user.username }}</h4>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="{% url 'logout' %}">Logout</a>
+                    </li>
+                </ul>  
+            </div>
+        </div>
+    </nav>
+    
+
+    <div class="container container-flex">
+        <div class="card">
+            <h4 class="card-title">Latest Health Data</h4>
+            <h5 class="card-text">
+                <strong>Pulse Rate:</strong> <span id="pulse_rate">0</span>
+                <br><strong>Blood Oxygen Level:</strong> <span id="blood_oxygen">0</span>
+            </h5>
+            <br>
+            <div style="display: flex; justify-content: center;">
+            <button id="startMeasurement" class="btn btn-primary" style="margin-bottom: 10px;width:200px;height: 40px;" >Start Measurement</button>
+            </div>
+            <div style="display: flex; justify-content: center;">
+            <form method="POST" action="{% url 'input_health_data_2'  %}">
+                {% csrf_token %}
+                
+                <input  type="hidden" name="user_id" value="{{ user.id }}">
+                <input  type="hidden" name="heart_rate" value="{{ avg_pulse }}">
+                <input  type="hidden" name="oxygen_level" value="{{ avg_oxygen }}">
+
+                <button type="submit" class="btn btn-primary" style="margin-bottom: 10px;width:200px;height: 40px;">Save Data</button>
+            </form>
+            </div>
+         
+        </div>
+        
+        <div class="chart-container">
+            <canvas id="pulseChart"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const ctx = document.getElementById('pulseChart').getContext('2d');
+        const pulseChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Pulse Rate (BPM)',
+                        data: [],
+                        borderColor: 'rgba(75, 192, 192, 1)',
+                        backgroundColor: 'rgba(255, 255, 255, 1)',
+                        fill: false,
+                        tension: 0.1
+                    },
+                    {
+                        label: 'Blood Oxygen Level (%)',
+                        data: [],
+                        borderColor: 'rgba(255, 99, 132, 1)',
+                        backgroundColor: 'rgba(255, 255, 255, 1)',
+                        fill: false,
+                        tension: 0.1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                scales: {
+                    x: {
+                        title: {
+                            display: true,
+                            text: 'Time (s)'
+                        }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: 'Value'
+                        }
+                    }
+                }
+            }
+        });
+
+        let pulseData = [];
+        let oxygenData = [];
+        let timeLabels = [];
+        let totalPulse = 0;
+        let totalOxygen = 0;
+        let count = 0;
+        const measurementDuration = 10000; // 5 seconds in milliseconds
+        let measurementInterval;
+
+        document.getElementById('startMeasurement').addEventListener('click', () => {
+            pulseData = [];
+            oxygenData = [];
+            timeLabels = [];
+            totalPulse = 0;
+            totalOxygen = 0;
+            count = 0;
+            let timeElapsed = 0;
+
+            document.getElementById('pulse_rate').innerText = 'Measuring...';
+            document.getElementById('blood_oxygen').innerText = 'Measuring...';
+
+            pulseChart.data.labels = [];
+            pulseChart.data.datasets[0].data = [];
+            pulseChart.data.datasets[1].data = [];
+            pulseChart.update();
+
+            measurementInterval = setInterval(() => {
+                fetch('http://127.0.0.1:8000/pulse/proxy_esp32_data/')
+                    .then(response => response.json())
+                    .then(data => {
+                        const pulseRate = data.pulse_rate;
+                        const bloodOxygen = data.blood_oxygen;
+
+                        pulseData.push(pulseRate);
+                        oxygenData.push(bloodOxygen);
+                        timeLabels.push(timeElapsed);
+
+                        totalPulse += pulseRate;
+                        totalOxygen += bloodOxygen;
+                        count++;
+
+                        pulseChart.data.labels = timeLabels;
+                        pulseChart.data.datasets[0].data = pulseData;
+                        pulseChart.data.datasets[1].data = oxygenData;
+                        pulseChart.update();
+
+                        timeElapsed++;
+                    })
+                    .catch(error => console.error('Fetch error:', error));
+            }, 1000);
+
+            setTimeout(() => {
+                clearInterval(measurementInterval);
+
+                const avgPulse = totalPulse / count;
+                const avgOxygen = totalOxygen / count;
+
+                document.getElementById('pulse_rate').innerText = Math.round(avgPulse) + " BPM";
+                document.getElementById('blood_oxygen').innerText = Math.round(avgOxygen) + " %";
+                document.querySelector('input[name="heart_rate"]').value = Math.round(avgPulse);
+                document.querySelector('input[name="oxygen_level"]').value = Math.round(avgOxygen);
+            }, measurementDuration);
+        });
+    </script>
+    
+    
+</body>
+</html>
